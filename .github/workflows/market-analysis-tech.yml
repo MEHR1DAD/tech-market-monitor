@@ -34,22 +34,43 @@ jobs:
         run: |
           python3 backend/main.py --channels backend/config.txt --output market_data_tech.json --limit 50 --max-duration 300
 
-      - name: Commit & Push (Force)
+      - name: Deploy to GH-Pages
         run: |
-          git config --global user.name "TechAnalyst"
-          git config --global user.email "analyst@tech.market"
-          
-          git add market_data_tech.json
-          git add media/ || echo "No media folder"
+          # --- DEPLOYMENT TO GH-PAGES ---
+          mkdir -p /tmp/deploy_cache
+          mv market_data_tech.json /tmp/deploy_cache/market_data_tech.json
           
           if [ -d "media" ]; then
              echo "🧹 Pruning old cache..."
              find media -type f -mtime +1 -delete || true
+             mv media /tmp/deploy_cache/media
+          fi
+
+          # Switch to gh-pages
+          git fetch origin gh-pages || true
+          git checkout gh-pages || git checkout --orphan gh-pages
+          git reset --hard origin/gh-pages || true
+
+          # Restore
+          if [ -f "/tmp/deploy_cache/market_data_tech.json" ]; then
+              mv /tmp/deploy_cache/market_data_tech.json ./market_data_tech.json
           fi
           
+          if [ -d "/tmp/deploy_cache/media" ]; then
+            mkdir -p media
+            cp -r /tmp/deploy_cache/media/* media/
+          fi
+          
+          # Commit and Push
+          git config --global user.name 'Tech Bot'
+          git config --global user.email 'bot@noreply.github.com'
+          
+          git add market_data_tech.json
+          git add media/ || echo "No media folder"
+          
           if [ -n "$(git status --porcelain)" ]; then
-            git commit -m "📊 Update Tech Data $(date +'%Y-%m-%d %H:%M')"
-            git push
+            git commit -m "Tech Update $(date)"
+            git push origin gh-pages --force
           else
-            echo "No changes."
+            echo "💤 No changes."
           fi
