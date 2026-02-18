@@ -1,0 +1,48 @@
+name: Auto Maintenance
+
+on:
+  schedule:
+    - cron: '0 3 * * 0' # Every Sunday at 3 AM
+  workflow_dispatch:
+
+jobs:
+  vacuum-cleaner:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check Size & Prune
+        run: |
+          # Calculate size in MB
+          SIZE_MB=$(du -sm . | cut -f1)
+          echo "📦 Current Repo Size: ${SIZE_MB} MB"
+          
+          # LIMIT: 400MB (Safe zone below 500MB)
+          if [ "$SIZE_MB" -gt 400 ]; then
+             echo "⚠️ Repo is bloated! Starting Nuclear Cleaning process..."
+             
+             # Configure Git
+             git config --global user.name "AutoCleaner"
+             git config --global user.email "cleaner@bot"
+             
+             # Create Orphan Branch (Empty history)
+             git checkout --orphan latest_state
+             
+             # Add current files
+             git add -A
+             
+             # Commit
+             git commit -m "🧹 Auto-Maintenance: History Reset (Size was ${SIZE_MB}MB)"
+             
+             # Force Push to overwrite main
+             git push origin latest_state:main --force
+             
+             echo "✅ History wiped. Repository is now tiny."
+          else
+             echo "✅ Size is safe. No action needed."
+          fi
