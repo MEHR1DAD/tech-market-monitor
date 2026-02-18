@@ -34,7 +34,7 @@ jobs:
           TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
           TELEGRAM_SESSION: ${{ secrets.TELEGRAM_SESSION }}
         run: |
-          python3 backend/main.py --channels config.txt --output market_data_tech.json --limit 50 --max-duration 300
+          python3 backend/main.py --channels config.txt --output ../market_data_tech.json --limit 50 --max-duration 300
 
       - name: Deploy to GH-Pages
         run: |
