@@ -435,9 +435,25 @@ async def main():
                 seen_ids.add(item['id'])
         
         merged_news.sort(key=lambda x: x['date'], reverse=True)
-        # Stability: Keep only last 200 items to prevent storage overflow
-        merged_news = merged_news[:200]
         
+        # --- Volumetric Quota System ---
+        MAX_JSON_SIZE_MB = 10
+        MAX_REPO_MEDIA_SIZE_MB = 400
+        MAX_MEDIA_DIR_SIZE_BYTES = MAX_REPO_MEDIA_SIZE_MB * 1024 * 1024
+        
+        # 1. Volumetric JSON Limit
+        # Calculate approximate byte size of the list in JSON. 
+        # If it exceeds the limit, pop the oldest items.
+        while True:
+            try:
+                # Use a fast estimation or precise json conversion
+                json_str = json.dumps(merged_news, ensure_ascii=False)
+                if len(json_str.encode('utf-8')) <= MAX_JSON_SIZE_MB * 1024 * 1024 or len(merged_news) == 0:
+                    break
+                merged_news.pop() # Remove the oldest
+            except Exception as e:
+                print(f"Error during JSON size check: {e}")
+                break
         # Cleanup orphaned media files
         # NOTE: With split files, multiple JSONs reference the same MEDIA_DIR.
         # Removing orphans based on ONE json file is DANGEROUS because another JSON might need them.
@@ -461,27 +477,56 @@ async def main():
         #             pass
         
         # 2. GLOBAL SIZE SAFETY SWEEP (Fix for Cloudflare 25MB limit)
-        # This is safe to run because it only targets oversize files which are illegal anyway.
         print("Running Global Size Safety Sweep...")
+        media_files = []
         for filename in os.listdir(MEDIA_DIR):
             file_path = os.path.join(MEDIA_DIR, filename)
             if os.path.isfile(file_path):
                 try:
-                    # Check if file > 22MB
-                    if os.path.getsize(file_path) > 22 * 1024 * 1024: 
-                        print(f"⚠️ Safety Sweep: Deleting oversized existing file {filename} ({os.path.getsize(file_path) // (1024*1024)} MB)")
+                    file_size = os.path.getsize(file_path)
+                    media_files.append((file_path, file_size, os.path.getmtime(file_path)))
+                    # Check if single file > 22MB
+                    if file_size > 22 * 1024 * 1024: 
+                        print(f"⚠️ Safety Sweep: Deleting oversized existing file {filename} ({file_size // (1024*1024)} MB)")
                         os.remove(file_path)
-                        # Also remove reference from news items to prevent broken links
+                        # Remove it from our tracking list since it's deleted
+                        media_files.pop()
+                        
                         file_web_path = f"/media/{filename}"
                         for item in merged_news:
                             if item.get('media') == file_web_path:
                                 item['media'] = None
                                 item['mediaType'] = None
-                                # Fallback to poster if available
-                                if not item.get('poster'):
-                                    item['poster'] = None
+                            if item.get('poster') == file_web_path:
+                                item['poster'] = None
                 except Exception as e:
                      print(f"Error checking file size {filename}: {e}")
+
+        # 3. VOLUMETRIC MEDIA LIMIT (Global Folder Quota)
+        # Sort remaining media files by modification time (oldest first)
+        media_files.sort(key=lambda x: x[2])
+        total_media_size = sum(f[1] for f in media_files)
+        
+        deleted_media = set()
+        while total_media_size > MAX_MEDIA_DIR_SIZE_BYTES and media_files:
+            oldest_file = media_files.pop(0)
+            try:
+                os.remove(oldest_file[0])
+                total_media_size -= oldest_file[1]
+                filename = os.path.basename(oldest_file[0])
+                deleted_media.add(f"/media/{filename}")
+                print(f"🧹 Volumetric limit reached: Deleted older file {filename}")
+            except Exception as e:
+                print(f"Error deleting old media file {oldest_file[0]}: {e}")
+                
+        # Remove references to cleanly deleted media in the JSON
+        if deleted_media:
+            for item in merged_news:
+                if item.get('media') in deleted_media:
+                    item['media'] = None
+                    item['mediaType'] = None
+                if item.get('poster') in deleted_media:
+                    item['poster'] = None
 
         os.makedirs(os.path.dirname(OUTPUT_FILE), exist_ok=True)
         with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
